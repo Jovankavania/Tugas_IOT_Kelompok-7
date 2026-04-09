@@ -1,0 +1,107 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h> // Library for the Web Server
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <DHT.h>
+
+const char* ssid     = "UPN TWIN TOWER";
+const char* password = "belanegara";
+
+// Hardware Pins
+#define DHTPIN 0      // D3
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// Initialize the web server on port 80
+ESP8266WebServer server(80);
+
+void handleRoot() {
+  digitalWrite(LED_BUILTIN, LOW); // Blink LED when someone visits the page
+  
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+// Membangun halaman HTML
+  String html = "<html><head>";
+  // Auto refresh setiap 5 detik
+  html += "<meta http-equiv='refresh' content='5'>";
+  html += "<style>";
+  html += "body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #f4f4f9; padding-top: 50px; }";
+  html += ".card { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); display: inline-block; }";
+  html += "h1 { color: #2c3e50; }";
+  html += "h2 { color: #3498db; margin-bottom: 20px; }"; // Warna biru untuk Kelompok 7
+  html += ".data { font-size: 28px; margin: 10px; color: #444; }";
+  html += "</style></head><body>";
+
+  html += "<div class='card'>";
+  html += "<h1>IoT Weather Station</h1>";
+  html += "<h2>Kelompok 7</h2>"; // Perubahan Nama Kelompok
+  html += "<hr>";
+  html += "<p class='data'>Suhu: <b>" + String(t, 1) + " &deg;C</b></p>";
+  html += "<p class='data'>Kelembapan: <b>" + String(h, 1) + " %</b></p>";
+  html += "<p style='font-size: 12px; color: #888;'>Data diperbarui otomatis setiap 5 detik</p>";
+  html += "</div>";
+
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+  
+  delay(100);
+  digitalWrite(LED_BUILTIN, HIGH);
+}
+
+void handleRootJSON() {
+  // Blink LED to indicate data transmission/request
+  digitalWrite(LED_BUILTIN, LOW); 
+  
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+
+  // Create a JSON string (Machine-friendly)
+  // Format: {"temperature": 25.5, "humidity": 60.0}
+  String json = "{";
+  json += "\"temperature\": " + String(t) + ",";
+  json += "\"humidity\": " + String(h);
+  json += "}";
+
+  // Send with "application/json" header instead of "text/html"
+  server.send(200, "application/json", json);
+  
+  delay(100);
+  digitalWrite(LED_BUILTIN, HIGH);
+}
+
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(LED_BUILTIN, OUTPUT);
+  dht.begin();
+
+  display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); }
+
+  // Define the "Home" route of the web server
+  server.on("/", handleRoot);
+  server.begin();
+
+  // Show the IP address on the OLED (You need this to access the data!)
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.println("IP Address:");
+  display.setTextSize(2);
+  display.setCursor(0,20);
+  display.println(WiFi.localIP());
+  display.display();
+}
+
+void loop() {
+  server.handleClient(); // Listen for web browsers
+}
