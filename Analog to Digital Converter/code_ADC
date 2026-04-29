@@ -1,0 +1,50 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+int adcPin = A0;
+int adcValue = 0;
+
+void setup() {
+  Serial.begin(9600);
+  Wire.begin(4, 5); // Sesuaikan pin I2C kamu
+
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    for(;;);
+  }
+
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(2);
+
+  display.clearDisplay();
+  display.setCursor(15, 25);
+  display.print("Kelompok");
+  display.display();
+  delay(1500);
+
+  display.clearDisplay();
+  display.setCursor(55, 25);
+  display.print("7");
+  display.display();
+  delay(1500);
+}
+
+void loop() {
+  adcValue = analogRead(adcPin);
+
+  display.clearDisplay();
+  display.setCursor(0, 10);
+  display.print("ADC:");
+
+  display.setCursor(0, 35);
+  display.print(adcValue);
+
+  display.display();
+  delay(500);
+}
