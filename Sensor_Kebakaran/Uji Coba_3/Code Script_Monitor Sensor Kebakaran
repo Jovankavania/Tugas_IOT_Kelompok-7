@@ -1,0 +1,255 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include "DHT.h"
+
+// 1. PIN SETTING ALL COMPONENT
+#define PIN_BUZZER 12    
+#define PIN_DHT    13    
+#define PIN_MQ2    26    
+#define PIN_FLAME  25    
+
+#define DHTTYPE DHT11
+DHT dht(PIN_DHT, DHTTYPE);
+
+// KONEKSI WI-FI RUMAH
+const char* ssid = "GUN_GUN"; 
+const char* password = "wingun20"; 
+
+WebServer server(80);
+
+// 2. UPGRADE STRUKTUR MEMORI HISTORI (Maksimal 10 data terakhir)
+const int MAX_DATA = 10;
+float riwayat_suhu[MAX_DATA] = {0};
+float riwayat_kelembaban[MAX_DATA] = {0};
+String riwayat_asap[MAX_DATA] = {""};
+String riwayat_api[MAX_DATA] = {""};
+int indeks_data = 0;
+unsigned long waktu_sebelumnya = 0;
+
+// Variabel pengunci mendeteksi perubahan status darurat secara real-time
+bool status_kebakaran_sebelumnya = false; 
+
+// Fungsi untuk memasukkan 4 data sensor sekaligus ke dalam tabel log
+void tambahRiwayat(float s, float k, int asap, int api) {
+  String status_asap = (asap == LOW) ? "⚠️ BAHAYA" : "✅ Aman";
+  String status_api = (api == LOW) ? "🚨 API!" : "✅ Aman";
+
+  if (indeks_data >= MAX_DATA) {
+    for (int i = 0; i < MAX_DATA - 1; i++) {
+      riwayat_suhu[i] = riwayat_suhu[i + 1];
+      riwayat_kelembaban[i] = riwayat_kelembaban[i + 1];
+      riwayat_asap[i] = riwayat_asap[i + 1];
+      riwayat_api[i] = riwayat_api[i + 1];
+    }
+    riwayat_suhu[MAX_DATA - 1] = s;
+    riwayat_kelembaban[MAX_DATA - 1] = k;
+    riwayat_asap[MAX_DATA - 1] = status_asap;
+    riwayat_api[MAX_DATA - 1] = status_api;
+  } else {
+    riwayat_suhu[indeks_data] = s;
+    riwayat_kelembaban[indeks_data] = k;
+    riwayat_asap[indeks_data] = status_asap;
+    riwayat_api[indeks_data] = status_api;
+    indeks_data++;
+  }
+}
+
+void handleRoot() {
+  float kelembaban = dht.readHumidity();
+  float suhu = dht.readTemperature();
+  int statusAsap = digitalRead(PIN_MQ2);
+  int statusApi = digitalRead(PIN_FLAME);
+
+  if (isnan(suhu) || isnan(kelembaban)) {
+    suhu = 0;
+    kelembaban = 0;
+  }
+
+  // Logika Alarm Kebakaran
+  if (statusAsap == LOW || statusApi == LOW) {
+    digitalWrite(PIN_BUZZER, HIGH); 
+  } else {
+    digitalWrite(PIN_BUZZER, LOW);  
+  }
+
+  // --- DESIGN TAMPILAN DASHBOARD IoT ADVANCE ---
+  String html = "<!DOCTYPE html><html lang=\"id\"><head><meta charset=\"utf-8\">";
+  html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+  html += "<title>Dashboard Monitor Kelompok 7</title>";
+  html += "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>";
+  
+  html += "<style>";
+  html += "* { box-sizing: border-box; margin: 0; padding: 0; }";
+  html += "body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 20px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }";
+  html += "h1 { margin: 10px 0; font-size: 1.8rem; text-transform: uppercase; letter-spacing: 2px; text-align: center; color: #f1f5f9; }";
+  html += "h3 { color: #38bdf8; margin-bottom: 20px; font-weight: 500; }";
+  html += ".status-panel { width: 100%; max-width: 1000px; padding: 18px; border-radius: 12px; font-size: 1.2rem; font-weight: bold; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }";
+  html += ".panel-safe { background: linear-gradient(135deg, #064e3b, #022c22); border: 2px solid #059669; color: #34d399; }";
+  html += ".panel-danger { background: linear-gradient(135deg, #7f1d1d, #450a0a); border: 2px solid #dc2626; color: #f87171; animation: blinker 1.5s linear infinite; }";
+  html += ".grid-utama { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; width: 100%; max-width: 1000px; }";
+  html += ".card { background: #1e293b; border-radius: 14px; padding: 22px; text-align: center; box-shadow: 0 8px 20px rgba(0,0,0,0.2); border-top: 5px solid #64748b; }";
+  html += ".card-dht { border-top-color: #38bdf8; }";
+  html += ".card-danger { border-top-color: #ef4444 !important; background: #450a0a; }";
+  html += ".value { font-size: 2.3rem; font-weight: 800; color: #38bdf8; margin: 5px 0; }";
+  html += ".unit { font-size: 1.1rem; color: #94a3b8; }";
+  html += ".safe { color: #34d399; font-size: 1.3rem; font-weight: 700; margin-top: 10px; }";
+  html += ".danger { color: #f87171; font-size: 1.3rem; font-weight: 700; margin-top: 10px; }";
+  
+  html += ".section-bawah { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; max-width: 1000px; margin-top: 20px; }";
+  html += "@media(max-width: 850px) { .section-bawah { grid-template-columns: 1fr; } }";
+  html += ".container-grafik { background: #1e293b; border-radius: 14px; padding: 20px; box-shadow: 0 8px 20px rgba(0,0,0,0.2); }";
+  html += ".container-tabel { background: #1e293b; border-radius: 14px; padding: 20px; box-shadow: 0 8px 20px rgba(0,0,0,0.2); max-height: 340px; overflow-y: auto; }";
+  
+  html += "table { width: 100%; border-collapse: collapse; margin-top: 10px; text-align: left; font-size: 0.9rem; }";
+  html += "th, td { padding: 10px; border-bottom: 1px solid #334155; }";
+  html += "th { color: #38bdf8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.5px; }";
+  html += "tr:hover { background-color: #243147; }";
+  html += ".td-danger { color: #f87171; font-weight: bold; }";
+  html += ".td-safe { color: #34d399; }";
+  html += "@keyframes blinker { 50% { opacity: 0.7; } }";
+  html += "</style>";
+  
+  // Auto-refresh halaman web tiap 2 detik untuk data kartu real-time
+  html += "<script>setInterval(function() { window.location.reload(); }, 2000);</script>";
+  html += "</head><body>";
+  
+  html += "<h1>🚒 Sistem Proteksi Kebakaran Gedung 🚒</h1>";
+  html += "<h3>Kelompok 7 - IoT Platform Realtime</h3>";
+
+  if (statusAsap == LOW || statusApi == LOW) {
+    html += "<div class=\"status-panel panel-danger\">🚨 KONDISI CRITICAL: TERDETEKSI BAHAYA KEBAKARAN! 🚨</div>";
+  } else {
+    html += "<div class=\"status-panel panel-safe\">✅ STATUS LINGKUNGAN AMAN TENTRAM</div>";
+  }
+
+  html += "<div class=\"grid-utama\">";
+  html += "<div class=\"card card-dht\"><h2>🌡️ Suhu & Humid</h2>";
+  if (suhu == 0 && kelembaban == 0) {
+    html += "<p style=\"color:#fb7185; font-weight:bold; margin-top:15px;\">⚠️ Sensor DHT11 Terputus!</p>";
+  } else {
+    html += "<div class=\"value\">" + String(suhu, 1) + "<span class=\"unit\"> &deg;C</span></div>";
+    html += "<div class=\"value\" style=\"color:#a78bfa;\">" + String(kelembaban, 0) + "<span class=\"unit\"> % RH</span></div>";
+  }
+  html += "</div>";
+
+  if (statusAsap == LOW) {
+    html += "<div class=\"card card-danger\"><h2>💨 Gas/Asap (MQ-2)</h2><div class=\"danger\">⚠️ PEKAT / TERDETEKSI</div>";
+  } else {
+    html += "<div class=\"card\"><h2>💨 Gas/Asap (MQ-2)</h2><div class=\"safe\">Normal (Bersih)</div>";
+  }
+  html += "</div>";
+
+  if (statusApi == LOW) {
+    html += "<div class=\"card card-danger\"><h2>🔥 Sensor Api (Flame)</h2><div class=\"danger\">🚨 LIDAH API TERLIHAT!</div>";
+  } else {
+    html += "<div class=\"card\"><h2>🔥 Sensor Api (Flame)</h2><div class=\"safe\">Normal</div>";
+  }
+  html += "</div></div>";
+
+  html += "<div class=\"section-bawah\">";
+  html += "<div class=\"container-grafik\"><h4 style=\"color:#38bdf8; margin-bottom:10px;\">📈 Grafik Perubahan Suhu (&deg;C)</h4>";
+  html += "<canvas id=\"grafikSuhu\" style=\"width:100%; max-height:240px;\"></canvas></div>";
+
+  html += "<div class=\"container-tabel\"><h4 style=\"color:#a78bfa; margin-bottom:10px;\">📋 10 Log Riwayat (Rutin 10s / Auto Bahaya)</h4>";
+  html += "<table><thead><tr><th>No</th><th>Suhu</th><th>Humid</th><th>Asap</th><th>Api</th></tr></thead><tbody>";
+  
+  int nomor_log = 1;
+  for (int i = indeks_data - 1; i >= 0; i--) {
+    html += "<tr><td>" + String(nomor_log++) + "</td>";
+    html += "<td style=\"color:#38bdf8; font-weight:bold;\">" + String(riwayat_suhu[i], 1) + "&deg;C</td>";
+    html += "<td style=\"color:#a78bfa;\">" + String(riwayat_kelembaban[i], 0) + "%</td>";
+    
+    String clsAsap = (riwayat_asap[i] == "⚠️ BAHAYA") ? "td-danger" : "td-safe";
+    String clsApi = (riwayat_api[i] == "🚨 API!") ? "td-danger" : "td-safe";
+    
+    html += "<td><span class=\"" + clsAsap + "\">" + riwayat_asap[i] + "</span></td>";
+    html += "<td><span class=\"" + clsApi + "\">" + riwayat_api[i] + "</span></td></tr>";
+  }
+  html += "</tbody></table></div></div>";
+
+  // ==================== FIX LOGIKA GRAFIK CHART.JS (DIKOREKSI TOTAL) ====================
+  html += "<script>const ctx = document.getElementById('grafikSuhu').getContext('2d');";
+  
+  // 1. Data Suhu di-render berurutan sesuai urutan array masuk (dari data terlama ke data terbaru)
+  html += "const dataSuhu = [";
+  for(int i = 0; i < indeks_data; i++) {
+    html += String(riwayat_suhu[i]);
+    if(i < indeks_data - 1) html += ",";
+  }
+  html += "];";
+  
+  // 2. Label Sumbu X yang sinkron maju ke depan 
+  html += "const labelsX = [";
+  for(int i = 0; i < indeks_data; i++) {
+    html += "'Data " + String(i + 1) + "'";
+    if(i < indeks_data - 1) html += ",";
+  }
+  html += "];";
+
+  // 3. Konfigurasi Chart dengan Auto-scaling Sumbu Y (Biar naik turunnya kelihatan tajam)
+  html += "new Chart(ctx, { type: 'line', data: { labels: labelsX, datasets: [{ label: 'Suhu (&deg;C)', data: dataSuhu, borderColor: '#38bdf8', backgroundColor: 'rgba(56, 189, 248, 0.1)', borderWidth: 3, tension: 0.4, fill: true, pointRadius: 4 }] }, options: { scales: { y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, beginAtZero: false }, x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } } }, plugins: { legend: { display: false } } } });</script>";
+  // ======================================================================================
+
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("\n======================================");
+  Serial.println("DASHBOARD IoT SMART EVENT-LOG READY");
+  Serial.println("======================================");
+
+  dht.begin();
+  pinMode(PIN_MQ2, INPUT);
+  pinMode(PIN_FLAME, INPUT);
+  pinMode(PIN_BUZZER, OUTPUT);
+
+  Serial.print("Mencoba konek ke Wi-Fi Rumah... ");
+  WiFi.begin(ssid, password);
+  
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  
+  Serial.println("\nESP32 Sukses Terhubung ke Wi-Fi!");
+  Serial.print("Silakan buka Browser dan ketik IP ini: ");
+  Serial.println(WiFi.localIP());
+  
+  server.on("/", handleRoot);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  int asap = digitalRead(PIN_MQ2);
+  int api = digitalRead(PIN_FLAME);
+
+  bool status_kebakaran_sekarang = (asap == LOW || api == LOW);
+
+  if (status_kebakaran_sekarang == true && status_kebakaran_sebelumnya == false) {
+    tambahRiwayat(t, h, asap, api);
+    status_kebakaran_sebelumnya = true; 
+    waktu_sebelumnya = millis();       
+  } 
+  else if (status_kebakaran_sekarang == false && status_kebakaran_sebelumnya == true) {
+    tambahRiwayat(t, h, asap, api); 
+    status_kebakaran_sebelumnya = false;
+    waktu_sebelumnya = millis();
+  }
+
+  unsigned long waktu_sekarang = millis();
+  if (waktu_sekarang - waktu_sebelumnya >= 10000) {
+    waktu_sebelumnya = waktu_sekarang;
+    
+    if (!isnan(h) && !isnan(t) && t > 0) {
+      tambahRiwayat(t, h, asap, api);
+    }
+  }
+}
